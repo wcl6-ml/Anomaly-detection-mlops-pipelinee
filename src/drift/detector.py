@@ -1,4 +1,3 @@
-"""Data drift detection module."""
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -23,7 +22,7 @@ class DriftDetector:
         self.threshold_ks = threshold_ks
         self.threshold_psi = threshold_psi
         self.feature_names = reference_data.columns.tolist()
-        
+        print(self.feature_names)
     def calculate_psi(self, expected: np.ndarray, actual: np.ndarray, 
                     buckets: int = 10) -> float:
         """

@@ -5,16 +5,21 @@ services:
       dockerfile: ./serve/Dockerfile.prod
     ports:
       - "8000:8000"
-  
+    volumes:
+      - ./logs:/app/logs 
+
   prometheus:
     image: prom/prometheus
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
       - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml
-
     ports:
       - "9090:9090"
-
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+      
   grafana:  
     image: grafana/grafana
     ports:
@@ -23,6 +28,3 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
- 
-
-

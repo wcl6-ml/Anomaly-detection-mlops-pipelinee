@@ -19,10 +19,17 @@ from prometheus_fastapi_instrumentator import Instrumentator
 import numpy as np
 import pandas as pd
 from datetime import datetime
+from collections import deque
+import json
 import logging
 import yaml
 
 from src.drift.detector import DriftDetector
+
+#In-memory circular buffer (keeps last N predictions)
+PREDICTION_BUFFER = deque(maxlen=1000)  # Only keeps last 1000 predictions
+PREDICTION_LOG_FILE = Path("logs/predictions.jsonl")
+PREDICTION_LOG_FILE.parent.mkdir(exist_ok=True)
 
 # Define the local path where Docker will have the model
 MODEL_PATH = Path(__file__).parent / "model/artifacts"
@@ -49,7 +56,7 @@ error_counter = Counter('prediction_errors_total', 'Total prediction errors', ['
 MODEL_DRIFT_GAUGE = Gauge(
     "model_drift_psi", 
     "Population Stability Index for data drift",
-    ["feature"]
+    ["feature", "batch_id"] # Added batch_id for backtrack
 )
 
 # Initialize Instrumentator but DON'T expose yet
@@ -77,7 +84,7 @@ class PredictionRequest(BaseModel):
                   0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0,
                   0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]]
     )
-
+    batch_id: str = "unknown" 
 
 class PredictionResponse(BaseModel):
     """Response schema for predictions."""
@@ -86,7 +93,8 @@ class PredictionResponse(BaseModel):
     anomaly_scores: List[float]
     model_version: str
     inference_time_ms: float
-
+    psi_score: float = 0.0  # Added for backtrack
+    batch_id: str = "unknown"  # Added for backtrack
 
 class HealthResponse(BaseModel):
     """Health check response."""
@@ -136,6 +144,11 @@ async def load_model():
         
         # Drop columns not used in prediction
         cols_to_drop = ['Time', 'Class']
+
+        # Remove Time, Class, Amount for drift detection (keep only V1-V28)
+        drift_columns = [col for col in reference_df.columns 
+                        if col not in ['Time', 'Class', 'Amount']]
+        drift_df = reference_df[drift_columns]
         reference_df = reference_df.drop(columns=cols_to_drop, errors='ignore')
         
         # 5. Calculate "System Noise" (Self-PSI)
@@ -149,8 +162,7 @@ async def load_model():
         
         # 6. Set dynamic threshold
         dynamic_threshold = 0.28  # ← Change the threshold for alerting here
-        
-        drift_detector = DriftDetector(reference_df, threshold_psi=dynamic_threshold)
+        drift_detector = DriftDetector(drift_df, threshold_psi=dynamic_threshold)
         
         logger.info(f"Drift detector initialized. Base Noise: {self_psi:.4f}")
         logger.info(f"Dynamic Alert Threshold set to: {dynamic_threshold:.4f}")
@@ -215,11 +227,25 @@ async def predict(request: PredictionRequest):
         raise HTTPException(status_code=503, detail="Model not loaded")
     
     try:
-        # Convert to DataFrame WITH COLUMN NAMES
-        if drift_detector is not None:
-            df = pd.DataFrame(request.features, columns=drift_detector.feature_names)
+        # Get the number of features sent in the first row
+        num_features_received = len(request.features[0])
+        
+        # Start with the base 28 names (V1-V28)
+        feature_names = list(drift_detector.feature_names) 
+
+        if num_features_received == 29:
+            # Only append if the user actually sent 29 items
+            if "Amount" not in feature_names:
+                feature_names.append("Amount")
+            df = pd.DataFrame(request.features, columns=feature_names)
         else:
-            df = pd.DataFrame(request.features)
+            # If they sent 28, use the names as-is (assuming names are V1-V28)
+            df = pd.DataFrame(request.features, columns=feature_names[:num_features_received])
+
+        # Create a specific DF for the drift detector (excluding 'Amount' if it exists)
+        # Drift detectors usually perform better on the normalized V1-V28 features
+        drift_cols = [c for c in df.columns if c not in ['Time', 'Class', 'Amount']]
+        drift_df = df[drift_cols]
         
         # Track null rates per feature
         for i in range(len(df.columns)):
@@ -233,7 +259,6 @@ async def predict(request: PredictionRequest):
         
         # Get predictions
         predictions = model.predict(df)
-        
         inference_time = (datetime.now() - start_time).total_seconds()
         
         # Record latency metric
@@ -253,28 +278,67 @@ async def predict(request: PredictionRequest):
             threshold = np.percentile(anomaly_scores, 90)
         else:
             threshold = 0.0
-            
         binary_preds = [1 if score > threshold else 0 for score in anomaly_scores]
         
         # Record metrics
         prediction_counter.inc(len(binary_preds))
         anomaly_score_gauge.set(np.mean(anomaly_scores))
-                # AFTER the predictions, ADD DRIFT DETECTION:
+        
+        # DRIFT DETECTION
+        drift_psi = 0.0
         if drift_detector is not None:
             try:
-                drift_results = drift_detector.detect_drift(df)
+                drift_results = drift_detector.detect_drift(drift_df)
+                drift_psi = drift_results['overall_psi']
                 
-                # Emit overall PSI
-                MODEL_DRIFT_GAUGE.labels(feature="overall").set(drift_results['overall_psi'])
-                
-                # Optionally emit per-feature PSI (for detailed monitoring)
-                for feature, metrics in drift_results['feature_drifts'].items():
-                    MODEL_DRIFT_GAUGE.labels(feature=feature).set(metrics['psi'])
+                # Emit overall PSI with batch_id label
+                MODEL_DRIFT_GAUGE.labels(
+                    feature="overall",
+                    batch_id=request.batch_id  # ADD THIS
+                ).set(drift_psi)
                 
                 if drift_results['drift_detected']:
-                    logger.warning(f"DRIFT ALERT: Overall PSI={drift_results['overall_psi']:.4f}")
+                    logger.warning(f"DRIFT ALERT [{request.batch_id}]: PSI={drift_psi:.4f}")
             except Exception as e:
                 logger.error(f"Drift detection failed: {e}")
+        
+        # ============ NEW: LOG PREDICTIONS ============
+        timestamp_iso = datetime.now().isoformat()
+        
+        # Create detailed log entry
+        log_entry = {
+            "batch_id": request.batch_id,
+            "timestamp": timestamp_iso,
+            "num_samples": len(binary_preds),
+            "anomaly_count": sum(binary_preds),
+            "anomaly_rate": sum(binary_preds) / len(binary_preds),
+            "mean_anomaly_score": float(np.mean(anomaly_scores)),
+            "max_anomaly_score": float(np.max(anomaly_scores)),
+            "psi_score": drift_psi,
+            "inference_time_ms": inference_time * 1000,
+            # Individual predictions (only store top-3 anomalies to save space)
+            "top_anomalies": [
+                {
+                    "index": i,
+                    "score": score,
+                    "prediction": pred
+                }
+                for i, (score, pred) in sorted(
+                    enumerate(zip(anomaly_scores, binary_preds)),
+                    key=lambda x: x[1][0],
+                    reverse=True
+                )[:3]  # Only top 3
+            ]
+        }
+        
+        # Add to in-memory buffer (automatically drops old entries)
+        PREDICTION_BUFFER.append(log_entry)
+        
+        # Write to file (append mode)
+        with open(PREDICTION_LOG_FILE, "a") as f:
+            f.write(json.dumps(log_entry) + "\n")
+        
+        # ============================================
         
         logger.info(f"Predicted {sum(binary_preds)}/{len(binary_preds)} anomalies in {inference_time*1000:.2f}ms")
         
@@ -282,7 +346,9 @@ async def predict(request: PredictionRequest):
             predictions=binary_preds,
             anomaly_scores=anomaly_scores,
             model_version=str(model_metadata.get("version", "unknown")),
-            inference_time_ms=inference_time * 1000
+            inference_time_ms=inference_time * 1000,
+            psi_score=drift_psi,  # ADD THIS to response model
+            batch_id=request.batch_id  # ADD THIS
         )
         
     except KeyError as e:
@@ -295,6 +361,23 @@ async def predict(request: PredictionRequest):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# NEW ENDPOINT: Query recent predictions
+@app.get("/predictions/recent")
+async def get_recent_predictions(limit: int = 100):
+    """Get recent predictions from in-memory buffer."""
+    return list(PREDICTION_BUFFER)[-limit:]
+
+
+# NEW ENDPOINT: Search for anomalous batches
+@app.get("/predictions/anomalous")
+async def get_anomalous_batches(psi_threshold: float = 0.3):
+    """Get batches with high drift."""
+    return [
+        entry for entry in PREDICTION_BUFFER 
+        if entry.get('psi_score', 0) > psi_threshold
+    ]
         
 @app.get("/model-info")
 async def model_info():

@@ -14,3 +14,6 @@ data/*
 archive/*
 serve/model/*
 .coverage*
+logs/*.jsonl
+logs/*.log
+!logs/.gitkeep
