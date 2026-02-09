@@ -179,10 +179,10 @@ curl "http://localhost:8000/predictions/recent?limit=20" | jq
 - **Model Performance:** Anomaly rate over time
 - **System Health:** Inference latency (p50/p95), resource usage
 - **Data Quality:** Feature-level drift (PSI)
-![Monitor](../images/Grafana_monitor.jpg)
+![Monitor](images/Grafana_monitor.jpg)
 ### Alerting Rules
 -  Drift detection: PSI > 0.28
-![Alerts](../images/Prometheus_alerts.jpg)
+![Alerts](images/Prometheus_alerts.jpg)
 
 ## Roadmap
 

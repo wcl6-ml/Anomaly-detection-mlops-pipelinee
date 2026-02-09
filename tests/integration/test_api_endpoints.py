@@ -30,11 +30,12 @@ def sample_request_payload():
     """Sample prediction request."""
     return {
         "features": [
-            [0.1] * 29,  # 29 features
+            [0.1] * 29,
             [0.2] * 29,
             [0.3] * 29,
             [0.4] * 29
-        ]
+        ],
+        "batch_id": "test_batch_001"  # ADD THIS LINE
     }
 
 
@@ -75,15 +76,26 @@ class TestHealthEndpoint:
 class TestPredictEndpoint:
     """Tests for /predict endpoint."""
     
+class TestPredictEndpoint:
+    """Tests for /predict endpoint."""
+    
     def test_predict_success(self, client, mock_model, sample_request_payload):
         """Test successful prediction."""
         from datetime import datetime
+        from unittest.mock import MagicMock
+        
+        # Create mock drift detector
+        mock_drift_detector = MagicMock()
+        mock_drift_detector.feature_names = [f'V{i}' for i in range(1, 29)]
+        mock_drift_detector.detect_drift.return_value = {
+            'overall_psi': 0.05,
+            'drift_detected': False
+        }
         
         with patch('serve.app.model', mock_model), \
-             patch('serve.app.model_metadata', {
-                 'version': '1.0',
-                 'startup_time': datetime.now()
-             }):
+            patch('serve.app.model_metadata', {'version': '1.0', 'startup_time': datetime.now()}), \
+            patch('serve.app.drift_detector', mock_drift_detector), \
+            patch('builtins.open', MagicMock()):
             
             response = client.post("/predict", json=sample_request_payload)
             
@@ -92,14 +104,15 @@ class TestPredictEndpoint:
             
             # Check response structure
             assert "predictions" in data
-            assert "anomaly_rate" in data
+            assert "anomaly_scores" in data
             assert "model_version" in data
             assert "inference_time_ms" in data
+            assert "psi_score" in data
+            assert "batch_id" in data
             
             # Check predictions
             assert len(data["predictions"]) == 4
             assert all(p in [0, 1] for p in data["predictions"])
-            
             
             # Verify model.predict was called
             mock_model.predict.assert_called_once()
