@@ -22,7 +22,7 @@ request_count = 0
 
 while (time.time() - start_time) < 180:  # Run for 3 minutes
     # 70% normal, 30% from batch files (potential drift)
-    if random.random() < 0.7:
+    if random.random() < 0.9:
         source = random.choice([reference_df, validation_df])
         source_name = "reference" if source is reference_df else "validation"
         sample = source.sample(n=min(100, len(source)))
