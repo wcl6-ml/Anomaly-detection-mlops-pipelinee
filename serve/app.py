@@ -48,7 +48,7 @@ app = FastAPI(
 # For Grafana monitoring
 prediction_counter = Counter('model_predictions_total', 'Total predictions made')
 prediction_latency = Histogram('model_inference_seconds', 'Model inference latency')
-anomaly_score_gauge = Gauge('model_anomaly_score', 'Latest average anomaly score')
+anomaly_rate_gauge = Gauge('anomaly_rate', 'Fraction of anomalous transactions')
 feature_null_rate = Gauge('feature_null_rate', 'Null rate in input features', ['feature_index'])
 error_counter = Counter('prediction_errors_total', 'Total prediction errors', ['error_type'])
 
@@ -259,6 +259,7 @@ async def predict(request: PredictionRequest):
         
         # Get predictions
         predictions = model.predict(df)
+
         inference_time = (datetime.now() - start_time).total_seconds()
         
         # Record latency metric
@@ -271,18 +272,17 @@ async def predict(request: PredictionRequest):
             pred_list = list(predictions)
         
         # For isolation forest, scores are negative (more negative = more anomalous)
-        anomaly_scores = [abs(float(p)) for p in pred_list]
+        anomaly_scores = [float(p) for p in pred_list]
         
-        # Binary predictions (1 = anomaly)
-        if len(anomaly_scores) > 1:
-            threshold = np.percentile(anomaly_scores, 90)
-        else:
-            threshold = 0.0
-        binary_preds = [1 if score > threshold else 0 for score in anomaly_scores]
+        # IF predict output 1 means normal, -1 means anomalous
+        binary_preds = [1 if score < 0 else 0 for score in anomaly_scores]
         
         # Record metrics
         prediction_counter.inc(len(binary_preds))
-        anomaly_score_gauge.set(np.mean(anomaly_scores))
+
+        # Recored the anomaly rate in a batch and transfer to python float for Grafanas
+        anomaly_rate = np.mean(binary_preds) 
+        anomaly_rate_gauge.set(float(anomaly_rate)) 
         
         # DRIFT DETECTION
         drift_psi = 0.0

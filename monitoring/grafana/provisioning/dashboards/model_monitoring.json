@@ -76,11 +76,11 @@
       "pluginVersion": "12.3.2",
       "targets": [
         {
-          "expr": "model_anomaly_score",
+          "expr": "anomaly_rate",
           "refId": "A"
         }
       ],
-      "title": "Latest Anomaly Score",
+      "title": "Latest Anomaly Rate",
       "type": "stat"
     },
     {
@@ -286,7 +286,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 24,
+        "w": 8,
         "x": 0,
         "y": 8
       },
