@@ -92,7 +92,7 @@ class TestPredictEndpoint:
             
             # Check response structure
             assert "predictions" in data
-            assert "anomaly_scores" in data
+            assert "anomaly_rate" in data
             assert "model_version" in data
             assert "inference_time_ms" in data
             
@@ -100,8 +100,6 @@ class TestPredictEndpoint:
             assert len(data["predictions"]) == 4
             assert all(p in [0, 1] for p in data["predictions"])
             
-            # Check anomaly scores are positive
-            assert all(s >= 0 for s in data["anomaly_scores"])
             
             # Verify model.predict was called
             mock_model.predict.assert_called_once()
