@@ -56,7 +56,7 @@ error_counter = Counter('prediction_errors_total', 'Total prediction errors', ['
 MODEL_DRIFT_GAUGE = Gauge(
     "model_drift_psi", 
     "Population Stability Index for data drift",
-    ["feature", "batch_id"] # Added batch_id for backtrack
+    ["feature"]
 )
 
 # Initialize Instrumentator but DON'T expose yet
@@ -293,8 +293,8 @@ async def predict(request: PredictionRequest):
                 
                 # Emit overall PSI with batch_id label
                 MODEL_DRIFT_GAUGE.labels(
-                    feature="overall",
-                    batch_id=request.batch_id  # ADD THIS
+                    feature="overall"
+                    
                 ).set(drift_psi)
                 
                 if drift_results['drift_detected']:
