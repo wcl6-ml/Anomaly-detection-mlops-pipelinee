@@ -1,30 +1,48 @@
 services:
   api:
-    build: 
+    build:
       context: .
       dockerfile: ./serve/Dockerfile.prod
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./logs:/app/logs 
+    expose:
+      - "8000"  # internal only
+    environment:
+      - API_KEY=${API_KEY:-demo-key-12345}
+    networks:
+      - backend  # Only backend, not frontend
 
   prometheus:
     image: prom/prometheus
+    expose:
+      - "9090"  # Internal only - no ports section
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
-      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml
-    ports:
-      - "9090:9090"
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.enable-lifecycle'
-      
-  grafana:  
+    networks:
+      - backend
+
+  grafana:
     image: grafana/grafana
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"  # Internal only
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-changeme}
+      - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - backend
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"  # public entry point
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - frontend
+      - backend
+    depends_on:
+      - api
+
+networks:
+  frontend:  # Public-facing
+  backend:   # Internal only

@@ -17,3 +17,4 @@ serve/model/*
 logs/*.jsonl
 logs/*.log
 !logs/.gitkeep
+nginx/certs/

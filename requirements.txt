@@ -8,3 +8,4 @@ evidently
 prometheus-client
 prometheus-fastapi-instrumentator
 pytest
+python-dotenv

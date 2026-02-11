@@ -8,7 +8,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 os.chdir(project_root)
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Security, Header
 from pydantic import BaseModel, Field
 from typing import List
 import mlflow.pyfunc
@@ -74,6 +74,13 @@ model_metadata = {}
 
 # For drift detection
 drift_detector = None  
+
+
+API_KEY = os.getenv("API_KEY")
+async def verify_api_key(x_api_key: str = Header(...)):
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    return x_api_key
 
 class PredictionRequest(BaseModel):
     """Request schema for predictions."""
@@ -219,7 +226,7 @@ async def health_check():
     )
 
 
-@app.post("/predict", response_model=PredictionResponse)
+@app.post("/predict", response_model=PredictionResponse, dependencies=[Security(verify_api_key)])
 async def predict(request: PredictionRequest):
     """Predict anomalies for given features."""
     if model is None:

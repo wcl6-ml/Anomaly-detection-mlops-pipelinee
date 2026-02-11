@@ -6,6 +6,14 @@ import random
 from pathlib import Path
 from datetime import datetime
 
+# For security
+import os
+from dotenv import load_dotenv
+
+# Load .env file
+load_dotenv()
+API_KEY = os.getenv("API_KEY")
+
 url = "http://localhost:8000/predict"
 
 # Load datasets
@@ -46,6 +54,7 @@ while (time.time() - start_time) < 180:  # Run for 3 minutes
     try:
         response = requests.post(
             url,
+            headers={"X-API-Key": API_KEY}, 
             json={
                 "features": features,
                 "batch_id": batch_id
