@@ -45,6 +45,9 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# 1. Initialize Instrumentator
+instrumentator = Instrumentator()
+
 # For Grafana monitoring
 prediction_counter = Counter('model_predictions_total', 'Total predictions made')
 prediction_latency = Histogram('model_inference_seconds', 'Model inference latency')
@@ -60,13 +63,13 @@ MODEL_DRIFT_GAUGE = Gauge(
 )
 
 # Initialize Instrumentator but DON'T expose yet
-instrumentator = Instrumentator().instrument(app)
-
+# instrumentator = Instrumentator().instrument(app)
+instrumentator.instrument(app).expose(app)
 # Create the Prometheus ASGI app
-metrics_app = make_asgi_app()
+#metrics_app = make_asgi_app()
 
 # Mount it to the /metrics path
-app.mount("/metrics", metrics_app)
+#app.mount("/metrics", metrics_app)
 
 # Global model variable
 model = None

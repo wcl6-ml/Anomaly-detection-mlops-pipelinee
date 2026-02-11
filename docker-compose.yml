@@ -1,48 +1,47 @@
+# docker-compose.yml
 services:
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "8000:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+      - prometheus 
+      - grafana 
   api:
     build:
       context: .
       dockerfile: ./serve/Dockerfile.prod
     expose:
-      - "8000"  # internal only
+      - "8000"
     environment:
-      - API_KEY=${API_KEY:-demo-key-12345}
-    networks:
-      - backend  # Only backend, not frontend
+      - API_KEY=${API_KEY}
+    volumes:
+      - ./logs:/app/logs
 
   prometheus:
     image: prom/prometheus
-    expose:
-      - "9090"  # Internal only - no ports section
+    expose:  # Only accessible from nginx
+      - "9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
-    networks:
-      - backend
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+      - '--web.external-url=http://localhost:8000/prometheus/'
+      - '--web.route-prefix=/'
 
   grafana:
     image: grafana/grafana
-    expose:
-      - "3000"  # Internal only
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-changeme}
-      - GF_USERS_ALLOW_SIGN_UP=false
+    expose:  # Only accessible from nginx
+      - "3000"
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
-    networks:
-      - backend
-
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "80:80"  # public entry point
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-    networks:
-      - frontend
-      - backend
-    depends_on:
-      - api
-
-networks:
-  frontend:  # Public-facing
-  backend:   # Internal only
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s:%(http_port)s/grafana/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true

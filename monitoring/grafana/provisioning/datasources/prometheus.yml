@@ -4,6 +4,7 @@ datasources:
   - name: Prometheus
     type: prometheus
     access: proxy
-    url: http://host.docker.internal:9090
+    # CHANGE THIS: Use the service name and the internal port
+    url: http://prometheus:9090
     isDefault: true
     editable: false
