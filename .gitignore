@@ -18,3 +18,4 @@ logs/*.jsonl
 logs/*.log
 !logs/.gitkeep
 nginx/certs/
+certs/

@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 API_KEY = os.getenv("API_KEY")
 
-url = "http://localhost:8000/predict"
+url = "https://localhost:443/predict" # update to https for security
 
 # Load datasets
 reference_df = pd.read_csv("data/processed/reference.csv")
@@ -59,7 +59,8 @@ while (time.time() - start_time) < 180:  # Run for 3 minutes
                 "features": features,
                 "batch_id": batch_id
             },
-            timeout=5
+            timeout=5,
+            verify=False # For local testing self-signed certs
         )
         
         if response.status_code == 200:
