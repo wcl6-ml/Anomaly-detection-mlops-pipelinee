@@ -1,21 +1,25 @@
+# Python
 __pycache__/
 *.pyc
-.env
 .venv/
-venv/
+
+# Secrets & Configs
+.env
+certs/
+nginx/certs/
+nginx/nginx.conf
+
+# Data & Models
+data/
+archive/
+serve/model/
+mlruns/
 .mlflow/
-mlflow/
-mlruns*
 *.db
-*.pkl
-*.pth
-data/raw/*
-data/*
-archive/*
-serve/model/*
-.coverage*
+
+# Logs
 logs/*.jsonl
 logs/*.log
 !logs/.gitkeep
-nginx/certs/
-certs/
+__pycache__/
+

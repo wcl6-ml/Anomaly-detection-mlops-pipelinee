@@ -197,4 +197,5 @@ curl "http://localhost:8000/predictions/recent?limit=20" | jq
 
  * Kubernetes deployment
  * Flux CD
+ * Secret management
 
