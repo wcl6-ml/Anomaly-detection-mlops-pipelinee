@@ -11,6 +11,8 @@ services:
       # Nginx handles the rest automatically
       - ./nginx/nginx.conf.template:/etc/nginx/templates/nginx.conf.template:ro
       - ./certs:/etc/nginx/certs:ro
+      # Add this line to remove the default conflict:
+      - /dev/null:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - api
       - prometheus 

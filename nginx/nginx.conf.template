@@ -1,4 +1,6 @@
-# this file is included INTO the main http block automatically.
+# Define the rate limit zone here
+limit_req_zone $binary_remote_addr zone=api_limit:10m rate=10r/s;
+
 map_hash_bucket_size 128;
 
 map $http_x_api_key $api_client_authorized {
