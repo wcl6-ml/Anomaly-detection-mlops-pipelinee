@@ -26,6 +26,9 @@ jobs:
         pip install pytest pytest-cov httpx  # httpx needed for TestClient
     
     - name: Run tests
+      env:
+        API_KEY: "ci-test-dummy-key"
+
       run: |
         pytest tests/ -v --cov=src --cov=serve --cov-report=term-missing
     

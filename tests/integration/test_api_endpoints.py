@@ -1,6 +1,8 @@
 """Integration tests for FastAPI endpoints."""
+import os 
 
 import pytest
+from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 import numpy as np
 import pandas as pd
@@ -9,6 +11,22 @@ import mlflow.pyfunc
 
 from serve.app import app
 
+
+# 1. Grab the key from CI env, or use a local fallback
+TEST_API_KEY = os.getenv("API_KEY", "ci-test-dummy-key")
+
+@pytest.fixture(autouse=True)
+def sync_app_api_key():
+    """
+    Force the app's internal API_KEY variable to match our TEST_API_KEY.
+    This solves the 'None != key' issue during import.
+    """
+    with patch("serve.app.API_KEY", TEST_API_KEY):
+        yield
+
+@pytest.fixture
+def auth_headers():
+    return {"x-api-key": TEST_API_KEY}
 
 @pytest.fixture
 def client():
@@ -72,17 +90,13 @@ class TestHealthEndpoint:
             assert data["model_version"] == "1.0"
             assert data["uptime_seconds"] >= 0
 
-
-class TestPredictEndpoint:
-    """Tests for /predict endpoint."""
     
 class TestPredictEndpoint:
     """Tests for /predict endpoint."""
     
-    def test_predict_success(self, client, mock_model, sample_request_payload):
+    def test_predict_success(self, client, mock_model, sample_request_payload, auth_headers):
         """Test successful prediction."""
         from datetime import datetime
-        from unittest.mock import MagicMock
         
         # Create mock drift detector
         mock_drift_detector = MagicMock()
@@ -97,7 +111,9 @@ class TestPredictEndpoint:
             patch('serve.app.drift_detector', mock_drift_detector), \
             patch('builtins.open', MagicMock()):
             
-            response = client.post("/predict", json=sample_request_payload)
+            response = client.post("/predict",
+                                    json=sample_request_payload, 
+                                    headers=auth_headers)
             
             assert response.status_code == 200
             data = response.json()
@@ -117,10 +133,21 @@ class TestPredictEndpoint:
             # Verify model.predict was called
             mock_model.predict.assert_called_once()
     
-    def test_predict_model_not_loaded(self, client, sample_request_payload):
+    def test_predict_invalid_key(self, client, sample_request_payload):
+        """Debug helper: Test that a wrong key is actually rejected."""
+        wrong_headers = {"x-api-key": "definitely-wrong-key"}
+        response = client.post("/predict", json=sample_request_payload, headers=wrong_headers)
+        
+        # This confirms your verify_api_key function is working
+        assert response.status_code == 401
+        assert response.json()["detail"] == "Invalid API key"
+
+    def test_predict_model_not_loaded(self, client, sample_request_payload, auth_headers):
         """Test prediction fails when model is not loaded."""
         with patch('serve.app.model', None):
-            response = client.post("/predict", json=sample_request_payload)
+            response = client.post("/predict", 
+                                    json=sample_request_payload, 
+                                    headers=auth_headers)
             
             assert response.status_code == 503
             assert "Model not loaded" in response.json()["detail"]
@@ -137,7 +164,7 @@ class TestPredictEndpoint:
             
             assert response.status_code == 422  # Validation error
     
-    def test_predict_wrong_feature_count(self, client, mock_model):
+    def test_predict_wrong_feature_count(self, client, mock_model, auth_headers):
         """Test prediction with wrong number of features."""
         from datetime import datetime
         
@@ -145,9 +172,12 @@ class TestPredictEndpoint:
              patch('serve.app.model_metadata', {'startup_time': datetime.now()}):
             
             # Only 10 features instead of 29
-            payload = {"features": [[0.1] * 10]}
+            payload = {
+                "features": [[0.1] * 10],
+                "batch_id": "test_batch_error"
+            }
             
-            response = client.post("/predict", json=payload)
+            response = client.post("/predict", json=payload, headers=auth_headers)
             
             # Should still return 200 but may have issues downstream
             # The actual behavior depends on your model
