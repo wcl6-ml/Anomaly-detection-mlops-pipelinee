@@ -116,6 +116,12 @@ docker-compose up -d
 
 # Simulate production traffic
 python scripts/generate_mixed_load.py
+```
+
+### 5. End-to-end deployment
+```bash
+./train_to_deploy.sh
+```
 
 ``````
 
@@ -196,6 +202,7 @@ curl "http://localhost:8000/predictions/recent?limit=20" | jq
 ## Future Enhancements
 
  * Kubernetes deployment
+ * Automatic retrain trigger
  * Flux CD
  * Secret management
 
