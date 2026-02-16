@@ -9,6 +9,11 @@ import mlflow.pyfunc
 
 from serve.app import app
 
+TEST_API_KEY = os.getenv("API_KEY", "test_key")
+
+@pytest.fixture
+def auth_headers():
+    return {"x-api-key": TEST_API_KEY}
 
 @pytest.fixture
 def client():

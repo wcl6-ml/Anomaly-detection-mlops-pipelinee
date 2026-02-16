@@ -4,20 +4,15 @@ set -e
 eval "$(mise activate bash)"
 
 echo "Installing Python dependencies..."
-
-python -m pip install --upgrade pip
-
-if [ -f requirements.txt ]; then
-  python -m pip install -r requirements.txt
-fi
+# This installs [project.dependencies] + [project.optional-dependencies]
+pip install -e ".[serve,dev]"
 
 if command -v nvidia-smi &>/dev/null; then
-  echo "GPU detected → installing CUDA PyTorch (cu121)"
-  python -m pip install torch torchvision torchaudio \
-    --index-url https://download.pytorch.org/whl/cu121
+  echo "GPU detected → installing CUDA PyTorch"
+  pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 else
   echo "No GPU detected → installing CPU PyTorch"
-  python -m pip install torch torchvision torchaudio
+  pip install torch torchvision torchaudio
 fi
 
 echo "Verifying torch install..."

@@ -12,6 +12,5 @@
   ],
   
   "remoteUser": "vscode",
-  "postCreateCommand": "mkdir -p ~/.ssh && ssh-keyscan github.com >> ~/.ssh/known_hosts",
-  "postCreateCommand": "scripts/setup && scripts/install_torch.sh"
+	"postCreateCommand": "chmod +x scripts/setup scripts/install_torch.sh && scripts/setup && scripts/install_torch.sh"
 }
