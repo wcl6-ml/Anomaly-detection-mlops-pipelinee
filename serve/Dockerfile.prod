@@ -2,18 +2,24 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install minimal system dependencies
+# 1. Install minimal system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy and install Python dependencies
-COPY serve/requirements-serve.txt .
-RUN pip install --no-cache-dir -r requirements-serve.txt
+# 2. Copy ONLY the configuration file first
+# This leverages Docker cache: if dependencies don't change, this layer is skipped.
+COPY pyproject.toml .
 
-# Copy application code
+# 3. Install ONLY the base and serve dependencies
+# We use --no-root because we haven't copied the source code yet
+RUN pip install --no-cache-dir .[serve]
+
+# 4. Copy application code
 COPY src/ /app/src/
 COPY serve/ /app/serve/
+# Note: In production, we usually don't bundle reference data in the image. 
+# We fetch it from an S3/Object Store. But for your MVP, this is fine.
 COPY data/processed/reference.csv /app/data/processed/reference.csv
 
 # Create non-root user
