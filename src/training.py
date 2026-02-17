@@ -83,7 +83,7 @@ def train_isolation_forest_from_config(config: dict):
         mlflow.sklearn.log_model(
             model, 
             "model",
-            registered_model_name=f"fraud-detector"  # ADD THIS
+            registered_model_name=f"fraud-detector"  
         )
         
         # Print results
@@ -116,8 +116,8 @@ def train_autoencoder_from_config(config: dict):
     
     with mlflow.start_run(run_name=config['mlflow']['run_name']):
         # Log tags and parameters
-        mlflow.set_tag("model_type", "autoencoder")  # ADD THIS
-        mlflow.set_tag("model_family", "anomaly_detection")  # ADD THIS
+        mlflow.set_tag("model_type", "autoencoder") 
+        mlflow.set_tag("model_family", "anomaly_detection")  
         mlflow.log_params({
             "model_type": config['model']['type'],
             **config['model'],
@@ -167,7 +167,7 @@ def train_autoencoder_from_config(config: dict):
         metrics["inference_time_ms"] = (time.time() - start) / len(X_val) * 1000
         
         #ENSURE metrics are logged
-        print(f"DEBUG: Metrics calculated: {list(metrics.keys())}")  # ADD THIS
+        print(f"DEBUG: Metrics calculated: {list(metrics.keys())}")  
         
         mlflow.log_metrics(metrics)
         
@@ -175,7 +175,7 @@ def train_autoencoder_from_config(config: dict):
         mlflow.pytorch.log_model(
             model, 
             "model",
-            registered_model_name=f"fraud-detector"  # ADD THIS
+            registered_model_name=f"fraud-detector"  
         )
         
         # Save scaler

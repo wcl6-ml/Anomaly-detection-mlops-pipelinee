@@ -12,5 +12,6 @@
   ],
   
   "remoteUser": "vscode",
-	"postCreateCommand": "chmod +x scripts/setup scripts/install_torch.sh && scripts/setup && scripts/install_torch.sh"
+  "onCreateCommand": "chmod +x scripts/setup && scripts/setup",
+	"postCreateCommand": "chmod +x scripts/install_torch.sh && scripts/install_torch.sh"
 }
