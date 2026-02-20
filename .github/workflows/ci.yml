@@ -25,12 +25,18 @@ jobs:
         pip install -r requirements.txt
         pip install pytest pytest-cov httpx  # httpx needed for TestClient
     
+    - name: Start System
+      env:
+          API_KEY: ${{ secrets.PROD_API_KEY }}
+      run: | # Docker-compose will pick up the API_KEY env var
+          docker-compose up -d nginx api
+
     - name: Run tests
       env:
-        API_KEY: "ci-test-dummy-key"
-
+        # This pulls the real key from GitHub Secrets
+        API_KEY: ${{ secrets.PROD_API_KEY }} 
       run: |
-        pytest tests/ -v --cov=src --cov=serve --cov-report=term-missing
+        pytest tests/ -v --cov=src --cov=serve --cov-report=term-missin
     
     - name: Lint with flake8
       run: |
