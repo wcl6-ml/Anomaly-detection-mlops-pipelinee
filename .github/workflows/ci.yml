@@ -27,10 +27,10 @@ jobs:
     
     - name: Run tests
       env:
-        API_KEY: "ci-test-dummy-key"
-
+        # This pulls the real key from GitHub Secrets
+        API_KEY: ${{ secrets.PROD_API_KEY }} 
       run: |
-        pytest tests/ -v --cov=src --cov=serve --cov-report=term-missing
+        pytest tests/ -v --cov=src --cov=serve --cov-report=term-missin
     
     - name: Lint with flake8
       run: |
