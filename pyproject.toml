@@ -26,6 +26,7 @@ serve = [
     "requests==2.31.0",
     "prometheus-client",
     "prometheus-fastapi-instrumentator",
+    "psycopg2-binary"
 ]
 # Dependencies for development and CI/CD
 dev = [
