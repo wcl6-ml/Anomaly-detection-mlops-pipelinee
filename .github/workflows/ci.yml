@@ -24,11 +24,11 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pytest pytest-cov httpx  # httpx needed for TestClient
-    
+  
     - name: Run tests
       env:
-        API_KEY: "ci-test-dummy-key"
-
+        # This pulls the real key from GitHub Secrets
+        API_KEY: ${{ secrets.PROD_API_KEY }} 
       run: |
         pytest tests/ -v --cov=src --cov=serve --cov-report=term-missing
     

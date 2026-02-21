@@ -9,6 +9,7 @@ __pycache__/
 certs/
 nginx/certs/
 nginx/nginx.conf
+*.agekey
 
 # Data & Models
 data/
