@@ -203,6 +203,6 @@ curl "http://localhost:8000/predictions/recent?limit=20" | jq
 
  * Kubernetes deployment
  * Automatic retrain trigger
- * Flux CD
- * Secret management
+ * CD
+- [x] Secret management
 

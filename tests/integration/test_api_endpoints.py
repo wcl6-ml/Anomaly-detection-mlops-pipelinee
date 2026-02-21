@@ -11,26 +11,22 @@ import mlflow.pyfunc
 
 from serve.app import app
 
-TEST_API_KEY = os.getenv("API_KEY", "test_key")
-
-@pytest.fixture
-def auth_headers():
-    return {"x-api-key": TEST_API_KEY}
-
-# 1. Grab the key from CI env, or use a local fallback
+# Capture the key from the environment (GitHub Secret in CI, or .env locally)
 TEST_API_KEY = os.getenv("API_KEY", "ci-test-dummy-key")
 
 @pytest.fixture(autouse=True)
 def sync_app_api_key():
     """
-    Force the app's internal API_KEY variable to match our TEST_API_KEY.
-    This solves the 'None != key' issue during import.
+    Force the app's internal API_KEY variable to match the one provided by 
+    the GitHub Environment/Secret. This ensures the 'client' and 'app' 
+    are using the real secret during the test run.
     """
     with patch("serve.app.API_KEY", TEST_API_KEY):
         yield
 
 @pytest.fixture
 def auth_headers():
+    """Provides headers containing the real key to test functions."""
     return {"x-api-key": TEST_API_KEY}
 
 @pytest.fixture
@@ -246,3 +242,4 @@ class TestMetricsEndpoint:
         assert response.status_code == 200
         # Prometheus metrics are in plain text format
         assert "text/plain" in response.headers.get("content-type", "")
+
