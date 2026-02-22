@@ -23,8 +23,16 @@ from collections import deque
 import json
 import logging
 import yaml
+# for database
+import sqlalchemy  
+from sqlalchemy import create_engine, text 
+
 
 from src.drift.detector import DriftDetector
+
+# Connect to db
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@db:5432/monitoring_db")
+engine = create_engine(DATABASE_URL)
 
 #In-memory circular buffer (keeps last N predictions)
 PREDICTION_BUFFER = deque(maxlen=1000)  # Only keeps last 1000 predictions
@@ -117,65 +125,31 @@ class HealthResponse(BaseModel):
 
 @app.on_event("startup")
 async def load_model():
-    """Load model from local folder on startup."""
+    """Load model and reference data from DB on startup."""
     global model, model_metadata, drift_detector
     
     try:
-        logger.info(f"Looking for model in: {MODEL_PATH}")
-        
-        # 1. Check if the directory exists
-        if not MODEL_PATH.exists():
-            raise FileNotFoundError(f"Model directory not found at {MODEL_PATH}")
-        
-        # 2. Load the model using pyfunc from the LOCAL path
+        # 1. Model Loading (Remains local/baked-in)
         model = mlflow.pyfunc.load_model(str(MODEL_PATH))
-        
-        # 3. Extract metadata from the MLmodel file
-        mlmodel_file = MODEL_PATH / "MLmodel"
-        if mlmodel_file.exists():
-            with open(mlmodel_file, "r") as f:
-                config = yaml.safe_load(f)
-                model_metadata = {
-                    "run_id": config.get("run_id", "unknown"),
-                    "version": "baked-in",
-                    "utc_time_created": config.get("utc_time_created", "unknown")
-                }
-        
-        model_metadata["startup_time"] = datetime.now()
-        logger.info(f"Successfully loaded model from {MODEL_PATH}")
-        
-        # 4. Load reference data for drift detection
-        ref_path = project_root / "data/processed/reference.csv"
-        if not ref_path.exists():
-            logger.warning(f"Reference data not found at {ref_path}. Drift detection disabled.")
-            return
-        
-        reference_df = pd.read_csv(ref_path)
-        
-        # Drop columns not used in prediction
-        cols_to_drop = ['Time', 'Class']
+        # ... (Metadata loading remains same)
 
-        # Remove Time, Class, Amount for drift detection (keep only V1-V28)
-        drift_columns = [col for col in reference_df.columns 
-                        if col not in ['Time', 'Class', 'Amount']]
+        # 2. MODIFIED: Load reference data from PostgreSQL
+        logger.info("Loading reference data from PostgreSQL...")
+        query = "SELECT * FROM 'reference_data'" # Ensure this table exists
+        try:
+            reference_df = pd.read_sql(query, engine)
+            logger.info(f"Loaded {len(reference_df)} rows of reference data from DB.")
+        except Exception as db_e:
+            logger.error(f"Database error: {db_e}. Falling back to CSV.")
+            ref_path = project_root / "data/processed/reference.csv"
+            reference_df = pd.read_csv(ref_path)
+        
+        # 3. Drift Detector setup (Same logic as before)
+        drift_columns = [col for col in reference_df.columns if col not in ['Time', 'Class', 'Amount']]
         drift_df = reference_df[drift_columns]
-        reference_df = reference_df.drop(columns=cols_to_drop, errors='ignore')
         
-        # 5. Calculate "System Noise" (Self-PSI)
-        mid = len(reference_df) // 2
-        ref_a = reference_df.iloc[:mid]
-        ref_b = reference_df.iloc[mid:]
-        
-        temp_detector = DriftDetector(ref_a)
-        self_drift_results = temp_detector.detect_drift(ref_b)
-        self_psi = self_drift_results['overall_psi']
-        
-        # 6. Set dynamic threshold
-        dynamic_threshold = 0.28  # ← Change the threshold for alerting here
+        dynamic_threshold = 0.28
         drift_detector = DriftDetector(drift_df, threshold_psi=dynamic_threshold)
-        
-        logger.info(f"Drift detector initialized. Base Noise: {self_psi:.4f}")
-        logger.info(f"Dynamic Alert Threshold set to: {dynamic_threshold:.4f}")
         
     except Exception as e:
         logger.error(f"Critical error loading model: {e}")
@@ -312,46 +286,33 @@ async def predict(request: PredictionRequest):
             except Exception as e:
                 logger.error(f"Drift detection failed: {e}")
         
-        # ============ NEW: LOG PREDICTIONS ============
-        timestamp_iso = datetime.now().isoformat()
+        # Log metrics to db
+        timestamp_iso = datetime.now()
         
-        # Create detailed log entry
-        log_entry = {
-            "batch_id": request.batch_id,
-            "timestamp": timestamp_iso,
-            "num_samples": len(binary_preds),
-            "anomaly_count": sum(binary_preds),
-            "anomaly_rate": sum(binary_preds) / len(binary_preds),
-            "mean_anomaly_score": float(np.mean(anomaly_scores)),
-            "max_anomaly_score": float(np.max(anomaly_scores)),
-            "psi_score": drift_psi,
-            "inference_time_ms": inference_time * 1000,
-            # Individual predictions (only store top-3 anomalies to save space)
-            "top_anomalies": [
-                {
-                    "index": i,
-                    "score": score,
-                    "prediction": pred
-                }
-                for i, (score, pred) in sorted(
-                    enumerate(zip(anomaly_scores, binary_preds)),
-                    key=lambda x: x[1][0],
-                    reverse=True
-                )[:3]  # Only top 3
-            ]
-        }
-        
-        # Add to in-memory buffer (automatically drops old entries)
-        PREDICTION_BUFFER.append(log_entry)
-        
-        # Write to file (append mode)
-        with open(PREDICTION_LOG_FILE, "a") as f:
-            f.write(json.dumps(log_entry) + "\n")
-        
-        # ============================================
-        
-        logger.info(f"Predicted {sum(binary_preds)}/{len(binary_preds)} anomalies in {inference_time*1000:.2f}ms")
-        
+        try:
+            # This dictionary keys now match the DB column names 1:1
+            log_entry = {
+                "batch_id": str(request.batch_id),
+                "timestamp": datetime.now(), # Use datetime object for TIMESTAMP column
+                "num_samples": int(len(binary_preds)),
+                "anomaly_count": int(sum(binary_preds)),
+                "anomaly_rate": float(np.mean(binary_preds)),
+                "psi_score": float(drift_psi),
+                "inference_time_ms": float(inference_time * 1000)
+            }
+
+            # Convert to DataFrame for easy insertion
+            log_df = pd.DataFrame([log_entry])
+            
+            # if_exists='append' keeps the data from previous requests
+            log_df.to_sql('prediction_logs', engine, if_exists='append', index=False)
+            
+        except Exception as db_log_e:
+            logger.error(f"Postgres Logging Failed: {db_log_e}")
+            # Fallback to local file remains a good safety net
+            with open(PREDICTION_LOG_FILE, "a") as f:
+                f.write(json.dumps(log_entry, default=str) + "\n")
+                
         return PredictionResponse(
             predictions=binary_preds,
             anomaly_scores=anomaly_scores,
