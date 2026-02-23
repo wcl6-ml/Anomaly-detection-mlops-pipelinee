@@ -22,9 +22,9 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pytest pytest-cov httpx  # httpx needed for TestClient
-  
+        # Install the project with all optional dependencies
+        pip install "."[serve,dev]
+        
     - name: Run tests
       env:
         # This pulls the real key from GitHub Secrets

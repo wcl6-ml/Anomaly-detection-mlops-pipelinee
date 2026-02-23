@@ -25,8 +25,11 @@ services:
       - "8000"
     environment:
       - API_KEY=${API_KEY}
+      - DATABASE_URL=postgresql://user:password@db:5432/monitoring_db # Add this
     volumes:
       - ./logs:/app/logs
+    depends_on:
+      - db # Ensure DB starts before the API
 
   prometheus:
     image: prom/prometheus
@@ -52,3 +55,18 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
       - GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s:%(http_port)s/grafana/
       - GF_SERVER_SERVE_FROM_SUB_PATH=true
+  db:
+      image: postgres:15
+      container_name: mlops_db
+      restart: always
+      environment:
+        POSTGRES_USER: user
+        POSTGRES_PASSWORD: password
+        POSTGRES_DB: monitoring_db
+      ports:
+        - "5432:5432"
+      volumes:
+        - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
