@@ -15,6 +15,7 @@ dependencies = [
     "mlflow==3.8.1",
     "evidently",
     "python-dotenv",
+    psycopg2-binary,
 ]
 
 [project.optional-dependencies]

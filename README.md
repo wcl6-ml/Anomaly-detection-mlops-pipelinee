@@ -198,11 +198,12 @@ curl "http://localhost:8000/predictions/recent?limit=20" | jq
 - [x] **Phase 6**: Batch simulation with checkpointing
 - [x] **Phase 7:** Automated CI/CD pipelines via GitHub Actions.
 - [x] Phase 8: Drift alerting & backtracking
+- [x] Phase 9: Secret management.
+- [x] Phase 10: Add a database to store log and reference data.
 
 ## Future Enhancements
 
  * Kubernetes deployment
  * Automatic retrain trigger
  * CD
-- [x] Secret management
 
