@@ -15,6 +15,7 @@ dependencies = [
     "mlflow==3.8.1",
     "evidently",
     "python-dotenv",
+    "psycopg2-binary",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +32,7 @@ serve = [
 # Dependencies for development and CI/CD
 dev = [
     "pytest",
+    "pytest-cov",
     "black",
     "flake8",
     "httpx", # Useful for testing FastAPI
