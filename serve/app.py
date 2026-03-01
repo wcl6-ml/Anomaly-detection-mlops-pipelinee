@@ -8,7 +8,9 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 os.chdir(project_root)
 
-from fastapi import FastAPI, HTTPException, Security, Header
+from fastapi import FastAPI, HTTPException, Security, Header, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse 
 from pydantic import BaseModel, Field
 from typing import List
 import mlflow.pyfunc
@@ -34,6 +36,7 @@ from src.drift.detector import DriftDetector
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@db:5432/monitoring_db")
 engine = create_engine(DATABASE_URL)
 
+
 #In-memory circular buffer (keeps last N predictions)
 PREDICTION_BUFFER = deque(maxlen=1000)  # Only keeps last 1000 predictions
 PREDICTION_LOG_FILE = Path("logs/predictions.jsonl")
@@ -53,6 +56,47 @@ app = FastAPI(
     version="1.0.0"
 )
 
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    # 1. Try to extract the batch_id from the raw body
+    actual_batch_id = "VALIDATION_FAILURE"
+    
+    try:
+        # request.body() is an awaitable that gives us the raw bytes
+        body_bytes = await request.body()
+        if body_bytes:
+            body_json = json.loads(body_bytes)
+            # Use .get() to avoid another error if batch_id itself is missing
+            actual_batch_id = body_json.get("batch_id", "MISSING_BATCH_ID")
+    except Exception:
+        # If the JSON is so broken it can't be parsed, we stick with the default
+        actual_batch_id = "MALFORMED_JSON"
+
+    # 2. Prepare the log entry for the DB
+    log_entry = {
+        "batch_id": str(actual_batch_id), 
+        "timestamp": datetime.now(),
+        "status": "422_ERROR",
+        "num_samples": 0,
+        "anomaly_count": 0,
+        "anomaly_rate": 0.0,
+        "psi_score": 0.0,
+        "inference_time_ms": 0.0,
+        "error_message": str(exc.errors())[:255]
+    }
+
+    # 3. Log to Postgres
+    try:
+        pd.DataFrame([log_entry]).to_sql('prediction_logs', engine, if_exists='append', index=False)
+    except Exception as db_e:
+        logger.error(f"Failed to log 422 to DB: {db_e}")
+
+    # 4. Return standard response
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()},
+    )
+    
 # 1. Initialize Instrumentator
 instrumentator = Instrumentator()
 
@@ -206,6 +250,19 @@ async def health_check():
 @app.post("/predict", response_model=PredictionResponse, dependencies=[Security(verify_api_key)])
 async def predict(request: PredictionRequest):
     """Predict anomalies for given features."""
+    # Initialize a base log entry in case of failure
+    log_entry = {
+        "batch_id": str(request.batch_id),
+        "timestamp": datetime.now(),
+        "status": "FAILURE", # Default to failure
+        "num_samples": 0,
+        "anomaly_count": 0,
+        "anomaly_rate": 0.0,
+        "psi_score": 0.0,
+        "inference_time_ms": 0.0,
+        "error_message": None
+    }
+
     if model is None:
         error_counter.labels(error_type='model_not_loaded').inc()
         raise HTTPException(status_code=503, detail="Model not loaded")
@@ -289,51 +346,42 @@ async def predict(request: PredictionRequest):
         # Log metrics to db
         timestamp_iso = datetime.now()
         
-        try:
-            # This dictionary keys now match the DB column names 1:1
-            log_entry = {
-                "batch_id": str(request.batch_id),
-                "timestamp": datetime.now(), # Use datetime object for TIMESTAMP column
-                "num_samples": int(len(binary_preds)),
-                "anomaly_count": int(sum(binary_preds)),
-                "anomaly_rate": float(np.mean(binary_preds)),
-                "psi_score": float(drift_psi),
-                "inference_time_ms": float(inference_time * 1000)
-            }
+        # SUCCESS: Update the log entry object
+        log_entry.update({
+            "status": "SUCCESS",
+            "num_samples": int(len(binary_preds)),
+            "anomaly_count": int(sum(binary_preds)),
+            "anomaly_rate": float(np.mean(binary_preds)),
+            "psi_score": float(drift_psi),
+            "inference_time_ms": float(inference_time * 1000)
+        })
 
-            # Convert to DataFrame for easy insertion
-            log_df = pd.DataFrame([log_entry])
-            
-            # if_exists='append' keeps the data from previous requests
-            log_df.to_sql('prediction_logs', engine, if_exists='append', index=False)
-            
-        except Exception as db_log_e:
-            logger.error(f"Postgres Logging Failed: {db_log_e}")
-            # Fallback to local file remains a good safety net
-            with open(PREDICTION_LOG_FILE, "a") as f:
-                f.write(json.dumps(log_entry, default=str) + "\n")
-                
         return PredictionResponse(
             predictions=binary_preds,
-            anomaly_scores=anomaly_scores,
+            anomaly_scores=[float(p) for p in predictions.tolist()],
             model_version=str(model_metadata.get("version", "unknown")),
             inference_time_ms=inference_time * 1000,
-            psi_score=drift_psi,  # ADD THIS to response model
-            batch_id=request.batch_id  # ADD THIS
+            psi_score=drift_psi,
+            batch_id=request.batch_id
         )
         
     except KeyError as e:
-        error_counter.labels(error_type='missing_field').inc()
-        logger.error(f"Prediction error: {e}")
-        raise HTTPException(status_code=400, detail=f"Missing field: {str(e)}")
+        log_entry["error_message"] = f"Missing field: {str(e)}"
+        raise HTTPException(status_code=400, detail=log_entry["error_message"])
+
     except Exception as e:
-        error_counter.labels(error_type='model_error').inc()
-        logger.error(f"Prediction error: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+            # Catch 500s (like the StandardScaler error)
+            log_entry["error_message"] = str(e)
+            logger.error(f"Prediction crash: {e}")
+            raise HTTPException(status_code=500, detail="Internal Server Error")
 
-
+    finally:
+        # SINGLE LOGGING POINT: This handles both SUCCESS and 500 FAILURES
+        try:
+            pd.DataFrame([log_entry]).to_sql('prediction_logs', engine, if_exists='append', index=False)
+        except Exception as db_e:
+            logger.error(f"Final DB log failed: {db_e}")
+                
 # NEW ENDPOINT: Query recent predictions
 @app.get("/predictions/recent")
 async def get_recent_predictions(limit: int = 100):

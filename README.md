@@ -184,8 +184,10 @@ psql -h localhost -p 5432 -U user -W -d monitoring_db
 ```
 
 ```sql
-SELECT * FROM "prediction_logs" LIMIT 5;
+SELECT * FROM prediction_logs LIMIT 5;
+SELECT error_messate FROM prediction_logs WHERE statu!=SUCCESS;
 ```
+
 
 
 ## Monitoring & Drift Detection
@@ -212,6 +214,8 @@ SELECT * FROM "prediction_logs" LIMIT 5;
 - [x] Phase 8: Drift alerting & backtracking
 - [x] Phase 9: Secret management.
 - [x] Phase 10: Add a database to store log and reference data.
+- [x] Phase 11: Edge case handling and log these cases.
+
 
 ## Future Enhancements
 
