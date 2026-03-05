@@ -15,6 +15,7 @@ nginx/nginx.conf
 data/
 archive/
 serve/model/
+model_store/
 mlruns/
 .mlflow/
 *.db

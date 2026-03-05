@@ -43,7 +43,8 @@ PREDICTION_LOG_FILE = Path("logs/predictions.jsonl")
 PREDICTION_LOG_FILE.parent.mkdir(exist_ok=True)
 
 # Define the local path where Docker will have the model
-MODEL_PATH = Path(__file__).parent / "model/artifacts"
+DEFAULT_MODEL_PATH = str(project_root / "serve/model/artifacts")
+MODEL_PATH = os.getenv("MODEL_PATH", DEFAULT_MODEL_PATH)
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -173,13 +174,17 @@ async def load_model():
     global model, model_metadata, drift_detector
     
     try:
-        # 1. Model Loading (Remains local/baked-in)
-        model = mlflow.pyfunc.load_model(str(MODEL_PATH))
-        # ... (Metadata loading remains same)
+        # 1. Dynamica model loading
+        logger.info(f"Attempting to load model from: {MODEL_PATH}")
+        if not os.path.exists(MODEL_PATH):
+            raise FileNotFoundError(f"Model directory not found at {MODEL_PATH}")
+            
+        model = mlflow.pyfunc.load_model(MODEL_PATH)
+        logger.info("Model loaded successfully.")
 
         # 2. MODIFIED: Load reference data from PostgreSQL
         logger.info("Loading reference data from PostgreSQL...")
-        query = "SELECT * FROM 'reference_data'" # Ensure this table exists
+        query = "SELECT * FROM reference_data" 
         try:
             reference_df = pd.read_sql(query, engine)
             logger.info(f"Loaded {len(reference_df)} rows of reference data from DB.")
