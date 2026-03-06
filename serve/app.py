@@ -171,7 +171,7 @@ class HealthResponse(BaseModel):
 @app.on_event("startup")
 async def load_model():
     """Load model and reference data from DB on startup."""
-    global model, model_metadata, drift_detector
+    global model, drift_detector
     
     try:
         # 1. Dynamica model loading
