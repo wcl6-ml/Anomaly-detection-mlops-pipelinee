@@ -26,8 +26,10 @@ services:
     environment:
       - API_KEY=${API_KEY}
       - DATABASE_URL=postgresql://user:password@db:5432/monitoring_db # Add this
-    volumes:
+      - MODEL_PATH=/app/model_mnt
+    volumes:    
       - ./logs:/app/logs
+      - ./model_store/production/artifacts:/app/model_mnt:ro
     depends_on:
       - db # Ensure DB starts before the API
 
@@ -63,8 +65,8 @@ services:
         POSTGRES_USER: user
         POSTGRES_PASSWORD: password
         POSTGRES_DB: monitoring_db
-      ports:
-        - "5432:5432"
+      expose:
+        - "5432"
       volumes:
         - postgres_data:/var/lib/postgresql/data
 

@@ -7,32 +7,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Copy ONLY the configuration file first
-# This leverages Docker cache: if dependencies don't change, this layer is skipped.
+# 2. Install dependencies (Optimized for caching)
 COPY pyproject.toml .
-
-# 3. Install ONLY the base and serve dependencies
-# We use --no-root because we haven't copied the source code yet
 RUN pip install --no-cache-dir .[serve]
 
-# 4. Copy application code
+# 3. Copy Application Logic (The "Engine")
+# We copy the folders, but we must ensure the large model files aren't inside them
 COPY src/ /app/src/
 COPY serve/ /app/serve/
-# Note: In production, we usually don't bundle reference data in the image. 
-# We fetch it from an S3/Object Store. But for your MVP, this is fine.
-COPY data/processed/reference.csv /app/data/processed/reference.csv
 
-# Create non-root user
+# 4. IMPORTANT: Ensure the mount point exists
+# This is where the PVC or Docker Volume will attach
+RUN mkdir -p /app/model_mnt && \
+    mkdir -p /app/logs
+
+# 5. Permissions
 RUN useradd -m -u 1000 appuser && \
     chown -R appuser:appuser /app
-
-RUN mkdir -p /app/logs && \
-chown -R appuser:appuser /app/logs
-
 USER appuser
 
 EXPOSE 8000
 
+# Updated Healthcheck to use the new logic
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()" || exit 1
 
