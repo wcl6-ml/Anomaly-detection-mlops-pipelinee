@@ -178,6 +178,18 @@ grep "batch_00" logs/predictions.jsonl | jq 'select(.psi_score > 0.3)'
 curl "http://localhost:8000/predictions/recent?limit=20" | jq
 ```
 
+Or connect to database and read from prediction table.
+```bash
+psql -h localhost -p 5432 -U user -W -d monitoring_db
+```
+
+```sql
+SELECT * FROM prediction_logs LIMIT 5;
+SELECT error_messate FROM prediction_logs WHERE statu!=SUCCESS;
+```
+
+
+
 ## Monitoring & Drift Detection
 
 ### Implemented Metrics
@@ -190,6 +202,8 @@ curl "http://localhost:8000/predictions/recent?limit=20" | jq
 -  Drift detection: PSI > 0.28
 ![Alerts](images/Prometheus_alerts.jpg)
 
+
+
 ## Roadmap
 
 - [x] **Phase 1-3:** Data batching, MLflow experiment tracking, and model selection.
@@ -198,11 +212,14 @@ curl "http://localhost:8000/predictions/recent?limit=20" | jq
 - [x] **Phase 6**: Batch simulation with checkpointing
 - [x] **Phase 7:** Automated CI/CD pipelines via GitHub Actions.
 - [x] Phase 8: Drift alerting & backtracking
+- [x] Phase 9: Secret management.
+- [x] Phase 10: Add a database to store log and reference data.
+- [x] Phase 11: Edge case handling and log these cases.
+
 
 ## Future Enhancements
 
  * Kubernetes deployment
  * Automatic retrain trigger
- * Flux CD
- * Secret management
+ * CD
 

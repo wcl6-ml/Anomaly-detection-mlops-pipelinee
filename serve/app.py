@@ -8,7 +8,9 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 os.chdir(project_root)
 
-from fastapi import FastAPI, HTTPException, Security, Header
+from fastapi import FastAPI, HTTPException, Security, Header, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse 
 from pydantic import BaseModel, Field
 from typing import List
 import mlflow.pyfunc
@@ -23,8 +25,17 @@ from collections import deque
 import json
 import logging
 import yaml
+# for database
+import sqlalchemy  
+from sqlalchemy import create_engine, text 
+
 
 from src.drift.detector import DriftDetector
+
+# Connect to db
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@db:5432/monitoring_db")
+engine = create_engine(DATABASE_URL)
+
 
 #In-memory circular buffer (keeps last N predictions)
 PREDICTION_BUFFER = deque(maxlen=1000)  # Only keeps last 1000 predictions
@@ -32,7 +43,8 @@ PREDICTION_LOG_FILE = Path("logs/predictions.jsonl")
 PREDICTION_LOG_FILE.parent.mkdir(exist_ok=True)
 
 # Define the local path where Docker will have the model
-MODEL_PATH = Path(__file__).parent / "model/artifacts"
+DEFAULT_MODEL_PATH = str(project_root / "serve/model/artifacts")
+MODEL_PATH = os.getenv("MODEL_PATH", DEFAULT_MODEL_PATH)
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -45,6 +57,47 @@ app = FastAPI(
     version="1.0.0"
 )
 
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    # 1. Try to extract the batch_id from the raw body
+    actual_batch_id = "VALIDATION_FAILURE"
+    
+    try:
+        # request.body() is an awaitable that gives us the raw bytes
+        body_bytes = await request.body()
+        if body_bytes:
+            body_json = json.loads(body_bytes)
+            # Use .get() to avoid another error if batch_id itself is missing
+            actual_batch_id = body_json.get("batch_id", "MISSING_BATCH_ID")
+    except Exception:
+        # If the JSON is so broken it can't be parsed, we stick with the default
+        actual_batch_id = "MALFORMED_JSON"
+
+    # 2. Prepare the log entry for the DB
+    log_entry = {
+        "batch_id": str(actual_batch_id), 
+        "timestamp": datetime.now(),
+        "status": "422_ERROR",
+        "num_samples": 0,
+        "anomaly_count": 0,
+        "anomaly_rate": 0.0,
+        "psi_score": 0.0,
+        "inference_time_ms": 0.0,
+        "error_message": str(exc.errors())[:255]
+    }
+
+    # 3. Log to Postgres
+    try:
+        pd.DataFrame([log_entry]).to_sql('prediction_logs', engine, if_exists='append', index=False)
+    except Exception as db_e:
+        logger.error(f"Failed to log 422 to DB: {db_e}")
+
+    # 4. Return standard response
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()},
+    )
+    
 # 1. Initialize Instrumentator
 instrumentator = Instrumentator()
 
@@ -117,65 +170,35 @@ class HealthResponse(BaseModel):
 
 @app.on_event("startup")
 async def load_model():
-    """Load model from local folder on startup."""
-    global model, model_metadata, drift_detector
+    """Load model and reference data from DB on startup."""
+    global model, drift_detector
     
     try:
-        logger.info(f"Looking for model in: {MODEL_PATH}")
-        
-        # 1. Check if the directory exists
-        if not MODEL_PATH.exists():
+        # 1. Dynamica model loading
+        logger.info(f"Attempting to load model from: {MODEL_PATH}")
+        if not os.path.exists(MODEL_PATH):
             raise FileNotFoundError(f"Model directory not found at {MODEL_PATH}")
-        
-        # 2. Load the model using pyfunc from the LOCAL path
-        model = mlflow.pyfunc.load_model(str(MODEL_PATH))
-        
-        # 3. Extract metadata from the MLmodel file
-        mlmodel_file = MODEL_PATH / "MLmodel"
-        if mlmodel_file.exists():
-            with open(mlmodel_file, "r") as f:
-                config = yaml.safe_load(f)
-                model_metadata = {
-                    "run_id": config.get("run_id", "unknown"),
-                    "version": "baked-in",
-                    "utc_time_created": config.get("utc_time_created", "unknown")
-                }
-        
-        model_metadata["startup_time"] = datetime.now()
-        logger.info(f"Successfully loaded model from {MODEL_PATH}")
-        
-        # 4. Load reference data for drift detection
-        ref_path = project_root / "data/processed/reference.csv"
-        if not ref_path.exists():
-            logger.warning(f"Reference data not found at {ref_path}. Drift detection disabled.")
-            return
-        
-        reference_df = pd.read_csv(ref_path)
-        
-        # Drop columns not used in prediction
-        cols_to_drop = ['Time', 'Class']
+            
+        model = mlflow.pyfunc.load_model(MODEL_PATH)
+        logger.info("Model loaded successfully.")
 
-        # Remove Time, Class, Amount for drift detection (keep only V1-V28)
-        drift_columns = [col for col in reference_df.columns 
-                        if col not in ['Time', 'Class', 'Amount']]
+        # 2. MODIFIED: Load reference data from PostgreSQL
+        logger.info("Loading reference data from PostgreSQL...")
+        query = "SELECT * FROM reference_data" 
+        try:
+            reference_df = pd.read_sql(query, engine)
+            logger.info(f"Loaded {len(reference_df)} rows of reference data from DB.")
+        except Exception as db_e:
+            logger.error(f"Database error: {db_e}. Falling back to CSV.")
+            ref_path = project_root / "data/processed/reference.csv"
+            reference_df = pd.read_csv(ref_path)
+        
+        # 3. Drift Detector setup (Same logic as before)
+        drift_columns = [col for col in reference_df.columns if col not in ['Time', 'Class', 'Amount']]
         drift_df = reference_df[drift_columns]
-        reference_df = reference_df.drop(columns=cols_to_drop, errors='ignore')
         
-        # 5. Calculate "System Noise" (Self-PSI)
-        mid = len(reference_df) // 2
-        ref_a = reference_df.iloc[:mid]
-        ref_b = reference_df.iloc[mid:]
-        
-        temp_detector = DriftDetector(ref_a)
-        self_drift_results = temp_detector.detect_drift(ref_b)
-        self_psi = self_drift_results['overall_psi']
-        
-        # 6. Set dynamic threshold
-        dynamic_threshold = 0.28  # ← Change the threshold for alerting here
+        dynamic_threshold = 0.28
         drift_detector = DriftDetector(drift_df, threshold_psi=dynamic_threshold)
-        
-        logger.info(f"Drift detector initialized. Base Noise: {self_psi:.4f}")
-        logger.info(f"Dynamic Alert Threshold set to: {dynamic_threshold:.4f}")
         
     except Exception as e:
         logger.error(f"Critical error loading model: {e}")
@@ -232,6 +255,19 @@ async def health_check():
 @app.post("/predict", response_model=PredictionResponse, dependencies=[Security(verify_api_key)])
 async def predict(request: PredictionRequest):
     """Predict anomalies for given features."""
+    # Initialize a base log entry in case of failure
+    log_entry = {
+        "batch_id": str(request.batch_id),
+        "timestamp": datetime.now(),
+        "status": "FAILURE", # Default to failure
+        "num_samples": 0,
+        "anomaly_count": 0,
+        "anomaly_rate": 0.0,
+        "psi_score": 0.0,
+        "inference_time_ms": 0.0,
+        "error_message": None
+    }
+
     if model is None:
         error_counter.labels(error_type='model_not_loaded').inc()
         raise HTTPException(status_code=503, detail="Model not loaded")
@@ -312,67 +348,45 @@ async def predict(request: PredictionRequest):
             except Exception as e:
                 logger.error(f"Drift detection failed: {e}")
         
-        # ============ NEW: LOG PREDICTIONS ============
-        timestamp_iso = datetime.now().isoformat()
+        # Log metrics to db
+        timestamp_iso = datetime.now()
         
-        # Create detailed log entry
-        log_entry = {
-            "batch_id": request.batch_id,
-            "timestamp": timestamp_iso,
-            "num_samples": len(binary_preds),
-            "anomaly_count": sum(binary_preds),
-            "anomaly_rate": sum(binary_preds) / len(binary_preds),
-            "mean_anomaly_score": float(np.mean(anomaly_scores)),
-            "max_anomaly_score": float(np.max(anomaly_scores)),
-            "psi_score": drift_psi,
-            "inference_time_ms": inference_time * 1000,
-            # Individual predictions (only store top-3 anomalies to save space)
-            "top_anomalies": [
-                {
-                    "index": i,
-                    "score": score,
-                    "prediction": pred
-                }
-                for i, (score, pred) in sorted(
-                    enumerate(zip(anomaly_scores, binary_preds)),
-                    key=lambda x: x[1][0],
-                    reverse=True
-                )[:3]  # Only top 3
-            ]
-        }
-        
-        # Add to in-memory buffer (automatically drops old entries)
-        PREDICTION_BUFFER.append(log_entry)
-        
-        # Write to file (append mode)
-        with open(PREDICTION_LOG_FILE, "a") as f:
-            f.write(json.dumps(log_entry) + "\n")
-        
-        # ============================================
-        
-        logger.info(f"Predicted {sum(binary_preds)}/{len(binary_preds)} anomalies in {inference_time*1000:.2f}ms")
-        
+        # SUCCESS: Update the log entry object
+        log_entry.update({
+            "status": "SUCCESS",
+            "num_samples": int(len(binary_preds)),
+            "anomaly_count": int(sum(binary_preds)),
+            "anomaly_rate": float(np.mean(binary_preds)),
+            "psi_score": float(drift_psi),
+            "inference_time_ms": float(inference_time * 1000)
+        })
+
         return PredictionResponse(
             predictions=binary_preds,
-            anomaly_scores=anomaly_scores,
+            anomaly_scores=[float(p) for p in predictions.tolist()],
             model_version=str(model_metadata.get("version", "unknown")),
             inference_time_ms=inference_time * 1000,
-            psi_score=drift_psi,  # ADD THIS to response model
-            batch_id=request.batch_id  # ADD THIS
+            psi_score=drift_psi,
+            batch_id=request.batch_id
         )
         
     except KeyError as e:
-        error_counter.labels(error_type='missing_field').inc()
-        logger.error(f"Prediction error: {e}")
-        raise HTTPException(status_code=400, detail=f"Missing field: {str(e)}")
+        log_entry["error_message"] = f"Missing field: {str(e)}"
+        raise HTTPException(status_code=400, detail=log_entry["error_message"])
+
     except Exception as e:
-        error_counter.labels(error_type='model_error').inc()
-        logger.error(f"Prediction error: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+            # Catch 500s (like the StandardScaler error)
+            log_entry["error_message"] = str(e)
+            logger.error(f"Prediction crash: {e}")
+            raise HTTPException(status_code=500, detail="Internal Server Error")
 
-
+    finally:
+        # SINGLE LOGGING POINT: This handles both SUCCESS and 500 FAILURES
+        try:
+            pd.DataFrame([log_entry]).to_sql('prediction_logs', engine, if_exists='append', index=False)
+        except Exception as db_e:
+            logger.error(f"Final DB log failed: {db_e}")
+                
 # NEW ENDPOINT: Query recent predictions
 @app.get("/predictions/recent")
 async def get_recent_predictions(limit: int = 100):

@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -22,21 +25,28 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pytest pytest-cov httpx  # httpx needed for TestClient
-    
+        # Install the project with all optional dependencies
+        pip install "."[serve,dev]
+        
     - name: Run tests
       env:
-        API_KEY: "ci-test-dummy-key"
-
+        # This pulls the real key from GitHub Secrets
+        API_KEY: ${{ secrets.PROD_API_KEY }} 
       run: |
         pytest tests/ -v --cov=src --cov=serve --cov-report=term-missing
-    
-    - name: Lint with flake8
-      run: |
-        pip install flake8
-        # Stop build if there are Python syntax errors or undefined names
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # Exit-zero treats all errors as warnings
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-      continue-on-error: true
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3  # Required so flake8 has files to scan
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Lint with flake8
+        run: |
+          pip install flake8
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics 

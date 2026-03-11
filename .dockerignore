@@ -1,0 +1,12 @@
+# Ignore local environment and cache
+.venv/
+__pycache__/
+*.pyc
+
+# Ignore the heavy model artifacts so they aren't baked into the image
+serve/model/artifacts/
+mlruns/
+mlflow.db
+
+# Ignore data raw files
+data/raw/

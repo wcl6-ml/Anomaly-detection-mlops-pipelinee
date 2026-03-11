@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 # Add project root to Python path
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 import mlflow
@@ -10,7 +10,7 @@ import shutil
 import os
 from config.mlflow_config import setup_mlflow
 
-def export_production_model(model_name="fraud-detector", output_dir="serve/model"):
+def export_production_model(model_name="fraud-detector", output_dir="model_store/production"):
     setup_mlflow()
     client = MlflowClient()
     
