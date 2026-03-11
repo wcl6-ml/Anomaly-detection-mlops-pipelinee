@@ -88,7 +88,7 @@ async def verify_api_key(x_api_key: str = Header(...)):
 class PredictionRequest(BaseModel):
     """Request schema for predictions."""
     features: List[List[float]] = Field(
-        ..., 
+        ..., # means the value is required, no default
         description="List of feature vectors (each should have 29 features)",
         example=[[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0,
                   0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0,
